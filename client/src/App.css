@@ -1,0 +1,152 @@
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: left;
+}
+
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.header h1 {
+  margin: 0;
+}
+
+.subtitle {
+  margin: 0.25rem 0 0;
+  color: #888;
+}
+
+.panel {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+@media (prefers-color-scheme: light) {
+  .panel {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+}
+
+.panel h2 {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+}
+
+.form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+.form.two {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 900px) {
+  .form.two {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+label {
+  display: grid;
+  gap: 0.25rem;
+  font-weight: 500;
+}
+
+input,
+textarea {
+  padding: 0.6em 0.75em;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+@media (prefers-color-scheme: light) {
+  input,
+  textarea {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+}
+
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 0.5rem 0;
+  padding: 0.75rem;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+@media (prefers-color-scheme: light) {
+  .error {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table th,
+.table td {
+  padding: 0.6rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  vertical-align: top;
+}
+
+@media (prefers-color-scheme: light) {
+  .table th,
+  .table td {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+  }
+}
+
+.table th {
+  text-align: left;
+  font-weight: 600;
+}
+
+.title {
+  min-width: 240px;
+}
+
+.actions {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.25rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.85em;
+}
+
+@media (prefers-color-scheme: light) {
+  .badge {
+    border: 1px solid rgba(0, 0, 0, 0.12);
+  }
+}
+
+.muted {
+  color: #888;
+}
