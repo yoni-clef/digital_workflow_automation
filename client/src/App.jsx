@@ -7,6 +7,7 @@ const nextActionByStatus = {
   REVIEW: { action: 'APPROVE', label: 'Approve' },
   APPROVE: { action: 'ARCHIVE', label: 'Archive' },
   ARCHIVE: null,
+  REJECTED: null,
 }
 
 function App() {
@@ -61,11 +62,10 @@ function App() {
     }
   }
 
-  async function onAdvance(item) {
-    const step = nextActionByStatus[item.status]
+  async function onTransition(item, step) {
     if (!step) return
     if (actor.trim().length < 2) {
-      setError('Enter your name in “Action by” to move items forward.')
+      setError('Enter your name in "Action by" to update an item.')
       return
     }
 
@@ -82,11 +82,19 @@ function App() {
     }
   }
 
+  async function onAdvance(item) {
+    await onTransition(item, nextActionByStatus[item.status])
+  }
+
+  async function onReject(item) {
+    await onTransition(item, { action: 'REJECT', label: 'Reject' })
+  }
+
   return (
     <div className="container">
       <header className="header">
         <h1>Digital Approval Workflow</h1>
-        <p className="subtitle">Request → Review → Approve → Archive</p>
+        <p className="subtitle">Request - Review - Approve - Archive</p>
       </header>
 
       <section className="panel">
@@ -159,9 +167,14 @@ function App() {
                     <td>{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="actions">
                       {step ? (
-                        <button type="button" onClick={() => onAdvance(item)}>
-                          {step.label}
-                        </button>
+                        <>
+                          <button type="button" onClick={() => onAdvance(item)}>
+                            {step.label}
+                          </button>
+                          <button type="button" className="secondary" onClick={() => onReject(item)}>
+                            Reject
+                          </button>
+                        </>
                       ) : (
                         <span className="muted">Done</span>
                       )}

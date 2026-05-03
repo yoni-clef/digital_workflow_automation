@@ -48,7 +48,13 @@ app.post('/api/requests', async (req, res, next) => {
     });
 
     const body = schema.parse(req.body);
-    const item = await createRequest(body);
+    const item = await createRequest({
+      ...body,
+      context: {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') ?? null
+      }
+    });
     res.status(201).json({ item });
   } catch (err) {
     next(err);
@@ -61,14 +67,21 @@ app.post('/api/requests/:id/transition', async (req, res, next) => {
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'INVALID_ID' });
 
     const schema = z.object({
-      action: z.enum(['REVIEW', 'APPROVE', 'ARCHIVE']),
+      action: z.enum(['REVIEW', 'APPROVE', 'ARCHIVE', 'REJECT']),
       by: z.string().trim().min(2).max(80),
       note: z.string().trim().min(0).max(500).optional()
     });
 
     const body = schema.parse(req.body);
 
-    const result = await transitionRequest({ id, ...body });
+    const result = await transitionRequest({
+      id,
+      ...body,
+      context: {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') ?? null
+      }
+    });
     if (result.error === 'NOT_FOUND') return res.status(404).json({ error: 'NOT_FOUND' });
     if (result.error === 'INVALID_TRANSITION') {
       return res.status(409).json({ error: 'INVALID_TRANSITION', ...result.details });

@@ -1,0 +1,76 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  REVIEWER
+  APPROVER
+  ADMIN
+}
+
+enum RequestStatus {
+  REQUEST
+  REVIEW
+  APPROVE
+  ARCHIVE
+  REJECTED
+}
+
+enum AuditAction {
+  CREATE
+  TRANSITION
+}
+
+model User {
+  id          String            @id @default(cuid())
+  displayName String
+  email       String?           @unique
+  role        Role              @default(USER)
+  department  String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  requests    WorkflowRequest[] @relation("SubmittedRequests")
+  auditLogs   RequestAuditLog[]
+
+  @@index([displayName])
+}
+
+model WorkflowRequest {
+  id          Int               @id @default(autoincrement())
+  title       String
+  description String            @default("")
+  status      RequestStatus     @default(REQUEST)
+  isDeleted   Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  submitterId String
+  submitter   User              @relation("SubmittedRequests", fields: [submitterId], references: [id])
+  history     RequestAuditLog[]
+
+  @@index([status, updatedAt])
+  @@index([submitterId, createdAt])
+}
+
+model RequestAuditLog {
+  id          String          @id @default(cuid())
+  requestId   Int
+  request     WorkflowRequest @relation(fields: [requestId], references: [id])
+  actorId     String
+  actor       User            @relation(fields: [actorId], references: [id])
+  action      AuditAction
+  fromStatus  RequestStatus?
+  toStatus    RequestStatus
+  note        String?
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime        @default(now())
+
+  @@index([requestId, createdAt])
+  @@index([actorId, createdAt])
+}

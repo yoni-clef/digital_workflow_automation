@@ -2,7 +2,10 @@ flowchart LR
   A[Request Created] --> B[Review]
   B --> C[Approve]
   C --> D[Archive]
+  A --> E[Rejected]
+  B --> E
+  C --> E
 
   %% Notes:
-  %% - Only forward transitions are allowed.
-  %% - Archive is a terminal state.
+  %% - Active workflow states can be rejected.
+  %% - Archive and Rejected are terminal states.

@@ -1,113 +1,155 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
+import { PrismaClient } from '@prisma/client';
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
-const DB_PATH = path.join(DATA_DIR, 'db.json');
+const prisma = new PrismaClient();
 
-const DEFAULT_DB = {
-  nextId: 1,
-  requests: []
+const allowedTransitions = {
+  REQUEST: { REVIEW: 'REVIEW', REJECT: 'REJECTED' },
+  REVIEW: { APPROVE: 'APPROVE', REJECT: 'REJECTED' },
+  APPROVE: { ARCHIVE: 'ARCHIVE', REJECT: 'REJECTED' },
+  ARCHIVE: {},
+  REJECTED: {}
 };
 
-async function ensureDataDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+function toApiRequest(request) {
+  return {
+    id: request.id,
+    title: request.title,
+    description: request.description,
+    createdBy: request.submitter.displayName,
+    status: request.status,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt,
+    history: request.history.map((entry) => ({
+      id: entry.id,
+      at: entry.createdAt,
+      from: entry.fromStatus,
+      to: entry.toStatus,
+      by: entry.actor.displayName,
+      note: entry.note,
+      action: entry.action,
+      ipAddress: entry.ipAddress,
+      userAgent: entry.userAgent
+    }))
+  };
 }
 
-async function readDb() {
-  await ensureDataDir();
-  try {
-    const raw = await fs.readFile(DB_PATH, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') return structuredClone(DEFAULT_DB);
-    if (!Array.isArray(parsed.requests)) parsed.requests = [];
-    if (!Number.isInteger(parsed.nextId)) parsed.nextId = 1;
-    return parsed;
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return structuredClone(DEFAULT_DB);
-    throw err;
+async function findOrCreateActor(displayName) {
+  const normalizedName = displayName.trim();
+  const existing = await prisma.user.findFirst({
+    where: { displayName: normalizedName }
+  });
+
+  if (existing) return existing;
+
+  return prisma.user.create({
+    data: { displayName: normalizedName }
+  });
+}
+
+const requestInclude = {
+  submitter: true,
+  history: {
+    orderBy: { createdAt: 'asc' },
+    include: { actor: true }
   }
-}
-
-async function writeDb(db) {
-  await ensureDataDir();
-  const tmp = `${DB_PATH}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(db, null, 2), 'utf8');
-  await fs.rename(tmp, DB_PATH);
-}
+};
 
 export async function listRequests() {
-  const db = await readDb();
-  return db.requests;
+  const requests = await prisma.workflowRequest.findMany({
+    where: { isDeleted: false },
+    orderBy: { updatedAt: 'desc' },
+    include: requestInclude
+  });
+
+  return requests.map(toApiRequest);
 }
 
 export async function getRequestById(id) {
-  const db = await readDb();
-  return db.requests.find((r) => r.id === id) ?? null;
-}
-
-export async function createRequest({ title, description, createdBy }) {
-  const db = await readDb();
-  const now = new Date().toISOString();
-
-  const request = {
-    id: db.nextId++,
-    title,
-    description,
-    createdBy,
-    status: 'REQUEST',
-    createdAt: now,
-    updatedAt: now,
-    history: [
-      {
-        at: now,
-        from: null,
-        to: 'REQUEST',
-        by: createdBy,
-        note: 'Created'
-      }
-    ]
-  };
-
-  db.requests.unshift(request);
-  await writeDb(db);
-  return request;
-}
-
-export async function transitionRequest({ id, action, by, note }) {
-  const db = await readDb();
-  const idx = db.requests.findIndex((r) => r.id === id);
-  if (idx === -1) return { error: 'NOT_FOUND' };
-
-  const request = db.requests[idx];
-  const from = request.status;
-
-  const allowed = {
-    REQUEST: { REVIEW: 'REVIEW' },
-    REVIEW: { APPROVE: 'APPROVE' },
-    APPROVE: { ARCHIVE: 'ARCHIVE' },
-    ARCHIVE: {}
-  };
-
-  const to = allowed[from]?.[action] ?? null;
-  if (!to) {
-    return {
-      error: 'INVALID_TRANSITION',
-      details: { from, action }
-    };
-  }
-
-  const now = new Date().toISOString();
-  request.status = to;
-  request.updatedAt = now;
-  request.history.push({
-    at: now,
-    from,
-    to,
-    by,
-    note: note ?? null
+  const request = await prisma.workflowRequest.findFirst({
+    where: { id, isDeleted: false },
+    include: requestInclude
   });
 
-  db.requests[idx] = request;
-  await writeDb(db);
-  return { request };
+  return request ? toApiRequest(request) : null;
+}
+
+export async function createRequest({ title, description, createdBy, context = {} }) {
+  const actor = await findOrCreateActor(createdBy);
+
+  const request = await prisma.workflowRequest.create({
+    data: {
+      title,
+      description,
+      submitterId: actor.id,
+      history: {
+        create: {
+          actorId: actor.id,
+          action: 'CREATE',
+          fromStatus: null,
+          toStatus: 'REQUEST',
+          note: 'Created',
+          ipAddress: context.ipAddress,
+          userAgent: context.userAgent
+        }
+      }
+    },
+    include: requestInclude
+  });
+
+  return toApiRequest(request);
+}
+
+export async function transitionRequest({ id, action, by, note, context = {} }) {
+  return prisma.$transaction(async (tx) => {
+    const request = await tx.workflowRequest.findFirst({
+      where: { id, isDeleted: false }
+    });
+
+    if (!request) return { error: 'NOT_FOUND' };
+
+    const from = request.status;
+    const to = allowedTransitions[from]?.[action] ?? null;
+
+    if (!to) {
+      return {
+        error: 'INVALID_TRANSITION',
+        details: { from, action }
+      };
+    }
+
+    let actor = await tx.user.findFirst({
+      where: { displayName: by.trim() }
+    });
+
+    if (!actor) {
+      actor = await tx.user.create({
+        data: { displayName: by.trim() }
+      });
+    }
+
+    await tx.workflowRequest.update({
+      where: { id },
+      data: {
+        status: to,
+        history: {
+          create: {
+            actorId: actor.id,
+            action: 'TRANSITION',
+            fromStatus: from,
+            toStatus: to,
+            note: note ?? null,
+            ipAddress: context.ipAddress,
+            userAgent: context.userAgent
+          }
+        }
+      }
+    });
+
+    const updated = await tx.workflowRequest.findUnique({
+      where: { id },
+      include: requestInclude
+    });
+
+    return { request: toApiRequest(updated) };
+  });
 }

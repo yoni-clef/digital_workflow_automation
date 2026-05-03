@@ -1,11 +1,12 @@
 # Digital Workflow Automation
 
-> Request → Review → Approve → Archive
+> Request -> Review -> Approve -> Archive, with rejected requests as a terminal path.
 
-A minimal full-stack prototype built with:
+A full-stack workflow automation prototype being evolved toward an enterprise-ready architecture.
 
 - **React (Vite)** client
 - **Node.js (Express)** server
+- **PostgreSQL + Prisma** persistence layer
 
 ---
 
@@ -13,10 +14,12 @@ A minimal full-stack prototype built with:
 
 ### Run the app
 
-From the repository root:
+Create `server/.env` from `server/.env.example`, then run from the repository root:
 
 ```powershell
 npm install
+npm -w server run prisma:generate
+npm -w server run prisma:migrate
 npm run dev
 ```
 
@@ -33,8 +36,9 @@ The client proxies `/api/*` to the server during development.
 
 - Create a request with `title`, `description`, and `createdBy`
 - Advance it through the workflow:
-  `REQUEST` → `REVIEW` → `APPROVE` → `ARCHIVE`
-- Local JSON persistence at `server/data/db.json`
+  `REQUEST` -> `REVIEW` -> `APPROVE` -> `ARCHIVE`
+- Reject active requests into terminal `REJECTED`
+- Persist users, workflow requests, and append-only audit logs in PostgreSQL through Prisma
 
 ---
 
@@ -45,7 +49,7 @@ The client proxies `/api/*` to the server during development.
 | `GET` | `/api/health` | Health check |
 | `GET` | `/api/requests` | List all requests |
 | `POST` | `/api/requests` | Create a request |
-| `POST` | `/api/requests/:id/transition` | Advance a request in the workflow |
+| `POST` | `/api/requests/:id/transition` | Advance or reject a request |
 
 ### Request bodies
 
@@ -59,7 +63,7 @@ The client proxies `/api/*` to the server during development.
 
 ```json
 {
-  "action": "REVIEW | APPROVE | ARCHIVE",
+  "action": "REVIEW | APPROVE | ARCHIVE | REJECT",
   "by": "string",
   "note": "string?"
 }

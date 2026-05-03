@@ -131,6 +131,13 @@ button:disabled {
 .actions {
   width: 1%;
   white-space: nowrap;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.secondary {
+  background: transparent;
+  color: inherit;
 }
 
 .badge {

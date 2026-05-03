@@ -1,0 +1,44 @@
+{
+  "nextId": 2,
+  "requests": [
+    {
+      "id": 1,
+      "title": "update the home page layout",
+      "description": "edit the layout",
+      "createdBy": "yonatan",
+      "status": "ARCHIVE",
+      "createdAt": "2026-05-03T14:38:02.567Z",
+      "updatedAt": "2026-05-03T14:40:00.285Z",
+      "history": [
+        {
+          "at": "2026-05-03T14:38:02.567Z",
+          "from": null,
+          "to": "REQUEST",
+          "by": "yonatan",
+          "note": "Created"
+        },
+        {
+          "at": "2026-05-03T14:39:45.891Z",
+          "from": "REQUEST",
+          "to": "REVIEW",
+          "by": "yonatan",
+          "note": null
+        },
+        {
+          "at": "2026-05-03T14:39:58.326Z",
+          "from": "REVIEW",
+          "to": "APPROVE",
+          "by": "yonatan",
+          "note": null
+        },
+        {
+          "at": "2026-05-03T14:40:00.285Z",
+          "from": "APPROVE",
+          "to": "ARCHIVE",
+          "by": "yonatan",
+          "note": null
+        }
+      ]
+    }
+  ]
+}
