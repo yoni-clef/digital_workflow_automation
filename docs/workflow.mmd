@@ -1,0 +1,8 @@
+flowchart LR
+  A[Request Created] --> B[Review]
+  B --> C[Approve]
+  C --> D[Archive]
+
+  %% Notes:
+  %% - Only forward transitions are allowed.
+  %% - Archive is a terminal state.
