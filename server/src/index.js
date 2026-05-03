@@ -3,34 +3,47 @@ import cors from 'cors';
 import { z } from 'zod';
 import {
   createRequest,
+  delegateRequest,
   getRequestById,
   listRequests,
   transitionRequest
 } from './store.js';
+import { authenticate, clearSessionCookie, devLogin } from './auth.js';
 
 const app = express();
-app.use(cors());
+app.use(cors({ credentials: true, origin: true }));
 app.use(express.json({ limit: '1mb' }));
 
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/requests', async (req, res, next) => {
+app.post('/api/auth/dev-login', devLogin);
+
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', clearSessionCookie());
+  res.json({ ok: true });
+});
+
+app.get('/api/session', authenticate, (req, res) => {
+  res.json({ user: req.user });
+});
+
+app.get('/api/requests', authenticate, async (req, res, next) => {
   try {
-    const items = await listRequests();
+    const items = await listRequests({ user: req.user });
     res.json({ items });
   } catch (err) {
     next(err);
   }
 });
 
-app.get('/api/requests/:id', async (req, res, next) => {
+app.get('/api/requests/:id', authenticate, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'INVALID_ID' });
 
-    const item = await getRequestById(id);
+    const item = await getRequestById(id, { user: req.user });
     if (!item) return res.status(404).json({ error: 'NOT_FOUND' });
 
     res.json({ item });
@@ -39,17 +52,19 @@ app.get('/api/requests/:id', async (req, res, next) => {
   }
 });
 
-app.post('/api/requests', async (req, res, next) => {
+app.post('/api/requests', authenticate, async (req, res, next) => {
   try {
     const schema = z.object({
       title: z.string().trim().min(3).max(120),
       description: z.string().trim().min(0).max(5000).optional().default(''),
-      createdBy: z.string().trim().min(2).max(80)
+      category: z.enum(['GENERAL', 'HARDWARE', 'SOFTWARE', 'FINANCE', 'HR']).default('GENERAL'),
+      amountCents: z.number().int().nonnegative().max(100000000).optional()
     });
 
     const body = schema.parse(req.body);
     const item = await createRequest({
       ...body,
+      user: req.user,
       context: {
         ipAddress: req.ip,
         userAgent: req.get('user-agent') ?? null
@@ -61,14 +76,13 @@ app.post('/api/requests', async (req, res, next) => {
   }
 });
 
-app.post('/api/requests/:id/transition', async (req, res, next) => {
+app.post('/api/requests/:id/transition', authenticate, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'INVALID_ID' });
 
     const schema = z.object({
-      action: z.enum(['REVIEW', 'APPROVE', 'ARCHIVE', 'REJECT']),
-      by: z.string().trim().min(2).max(80),
+      action: z.enum(['REVIEW', 'APPROVE', 'ARCHIVE', 'REQUEST_INFO', 'RESUBMIT', 'REJECT']),
       note: z.string().trim().min(0).max(500).optional()
     });
 
@@ -77,12 +91,56 @@ app.post('/api/requests/:id/transition', async (req, res, next) => {
     const result = await transitionRequest({
       id,
       ...body,
+      user: req.user,
       context: {
         ipAddress: req.ip,
         userAgent: req.get('user-agent') ?? null
       }
     });
     if (result.error === 'NOT_FOUND') return res.status(404).json({ error: 'NOT_FOUND' });
+    if (result.error === 'FORBIDDEN') return res.status(403).json({ error: 'FORBIDDEN' });
+    if (result.error === 'INVALID_TRANSITION') {
+      return res.status(409).json({ error: 'INVALID_TRANSITION', ...result.details });
+    }
+
+    res.json({ item: result.request });
+  } catch (err) {
+    next(err);
+  }
+});
+
+app.post('/api/requests/:id/delegate', authenticate, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'INVALID_ID' });
+
+    const schema = z.object({
+      displayName: z.string().trim().min(2).max(80),
+      email: z.string().trim().email().max(320).optional().or(z.literal('')),
+      role: z.enum(['REVIEWER', 'APPROVER']).default('REVIEWER'),
+      department: z.string().trim().min(0).max(80).optional().default(''),
+      note: z.string().trim().min(0).max(500).optional()
+    });
+
+    const body = schema.parse(req.body);
+    const result = await delegateRequest({
+      id,
+      assignee: {
+        displayName: body.displayName,
+        email: body.email || null,
+        role: body.role,
+        department: body.department || null
+      },
+      note: body.note,
+      user: req.user,
+      context: {
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent') ?? null
+      }
+    });
+
+    if (result.error === 'NOT_FOUND') return res.status(404).json({ error: 'NOT_FOUND' });
+    if (result.error === 'FORBIDDEN') return res.status(403).json({ error: 'FORBIDDEN' });
     if (result.error === 'INVALID_TRANSITION') {
       return res.status(409).json({ error: 'INVALID_TRANSITION', ...result.details });
     }

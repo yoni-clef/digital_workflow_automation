@@ -17,6 +17,7 @@ enum Role {
 enum RequestStatus {
   REQUEST
   REVIEW
+  NEEDS_INFO
   APPROVE
   ARCHIVE
   REJECTED
@@ -25,6 +26,7 @@ enum RequestStatus {
 enum AuditAction {
   CREATE
   TRANSITION
+  DELEGATE
 }
 
 model User {
@@ -36,6 +38,7 @@ model User {
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   requests    WorkflowRequest[] @relation("SubmittedRequests")
+  assignedRequests WorkflowRequest[] @relation("AssignedRequests")
   auditLogs   RequestAuditLog[]
 
   @@index([displayName])
@@ -45,16 +48,22 @@ model WorkflowRequest {
   id          Int               @id @default(autoincrement())
   title       String
   description String            @default("")
+  category    String            @default("GENERAL")
+  amountCents Int?
   status      RequestStatus     @default(REQUEST)
   isDeleted   Boolean           @default(false)
+  dueAt       DateTime?
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
   submitterId String
   submitter   User              @relation("SubmittedRequests", fields: [submitterId], references: [id])
+  assignedToId String?
+  assignedTo   User?            @relation("AssignedRequests", fields: [assignedToId], references: [id])
   history     RequestAuditLog[]
 
   @@index([status, updatedAt])
   @@index([submitterId, createdAt])
+  @@index([assignedToId, dueAt])
 }
 
 model RequestAuditLog {

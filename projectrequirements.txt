@@ -59,9 +59,3 @@ The application must be deployable, scalable, and monitorable.
 * **Monitoring:** Application Performance Monitoring (APM) and centralized logging capabilities (Datadog, Sentry, or standard ELK stack).
 
 ---
-
-### Suggested First Steps for Implementation
-If you want to start building this right now, I recommend tackling these foundational pieces first:
-1. **Swap the Database:** Rip out `db.json` and set up **PostgreSQL** with an ORM like **Prisma**.
-2. **Add Authentication:** Integrate **NextAuth / Auth.js** or **Clerk** to replace the manual "Created by" text inputs with actual logged-in user identities.
-3. **Allow Rejections:** Update the State Machine to allow a `REJECTED` status that halts the process entirely.

@@ -1,11 +1,18 @@
 flowchart LR
   A[Request Created] --> B[Review]
+  A -- hardware under 500 --> C[Approve]
   B --> C[Approve]
   C --> D[Archive]
+  B --> F[Needs Info]
+  C --> F
+  F --> B
   A --> E[Rejected]
   B --> E
+  F --> E
   C --> E
 
   %% Notes:
-  %% - Active workflow states can be rejected.
+  %% - Active workflow states can be delegated.
+  %% - Review carries a 7 day SLA due date.
+  %% - Hardware requests under 500.00 are auto-approved.
   %% - Archive and Rejected are terminal states.
