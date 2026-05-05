@@ -33,6 +33,7 @@ model User {
   id          String            @id @default(cuid())
   displayName String
   email       String?           @unique
+  passwordHash String?
   role        Role              @default(USER)
   department  String?
   createdAt   DateTime          @default(now())
@@ -60,6 +61,7 @@ model WorkflowRequest {
   assignedToId String?
   assignedTo   User?            @relation("AssignedRequests", fields: [assignedToId], references: [id])
   history     RequestAuditLog[]
+  attachments Attachment[]
 
   @@index([status, updatedAt])
   @@index([submitterId, createdAt])
@@ -82,4 +84,17 @@ model RequestAuditLog {
 
   @@index([requestId, createdAt])
   @@index([actorId, createdAt])
+}
+
+model Attachment {
+  id          String          @id @default(cuid())
+  requestId   Int
+  request     WorkflowRequest @relation(fields: [requestId], references: [id])
+  filename    String
+  path        String
+  mimetype    String
+  sizeBytes   Int
+  createdAt   DateTime        @default(now())
+
+  @@index([requestId])
 }

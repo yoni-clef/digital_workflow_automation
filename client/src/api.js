@@ -38,8 +38,16 @@ export async function getSession() {
   return data.user
 }
 
-export async function devLogin(payload) {
-  const data = await httpJson('/api/auth/dev-login', {
+export async function register(payload) {
+  const data = await httpJson('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+  return data.user
+}
+
+export async function login(payload) {
+  const data = await httpJson('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify(payload),
   })
@@ -74,4 +82,21 @@ export async function delegateRequest(id, payload) {
     body: JSON.stringify(payload),
   })
   return data.item
+}
+
+export async function uploadAttachment(requestId, file) {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`/api/requests/${requestId}/attachments`, {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+  })
+  const data = await res.json()
+  if (!res.ok) {
+    const err = new Error(data?.error ?? `HTTP_${res.status}`)
+    err.status = res.status
+    throw err
+  }
+  return data.attachment
 }

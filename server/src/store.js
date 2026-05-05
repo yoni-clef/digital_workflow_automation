@@ -59,13 +59,42 @@ function toApiRequest(request) {
       action: entry.action,
       ipAddress: entry.ipAddress,
       userAgent: entry.userAgent
-    }))
+    })),
+    attachments: request.attachments?.map((att) => ({
+      id: att.id,
+      filename: att.filename,
+      url: `/api/uploads/${att.filename}`,
+      mimetype: att.mimetype,
+      sizeBytes: att.sizeBytes,
+      createdAt: att.createdAt
+    })) || []
   };
 }
 
 export async function getUserById(id) {
   return prisma.user.findUnique({
     where: { id }
+  });
+}
+
+export async function getUserByEmail(email) {
+  return prisma.user.findUnique({
+    where: { email: email.trim().toLowerCase() }
+  });
+}
+
+export async function createUser({ displayName, email, passwordHash, role = 'USER', department = null }) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedName = displayName.trim();
+
+  return prisma.user.create({
+    data: {
+      displayName: normalizedName,
+      email: normalizedEmail,
+      passwordHash,
+      role,
+      department
+    }
   });
 }
 
@@ -116,7 +145,8 @@ const requestInclude = {
   history: {
     orderBy: { createdAt: 'asc' },
     include: { actor: true }
-  }
+  },
+  attachments: true
 };
 
 function addDays(date, days) {
@@ -347,4 +377,17 @@ export async function delegateRequest({ id, assignee, user, note, context = {} }
 
     return { request: toApiRequest(updated) };
   });
+}
+
+export async function addAttachmentToRequest({ requestId, filename, path, mimetype, sizeBytes }) {
+  const attachment = await prisma.attachment.create({
+    data: {
+      requestId,
+      filename,
+      path,
+      mimetype,
+      sizeBytes
+    }
+  });
+  return attachment;
 }

@@ -8,17 +8,26 @@ import {
   listRequests,
   transitionRequest
 } from './store.js';
-import { authenticate, clearSessionCookie, devLogin } from './auth.js';
+import { authenticate, clearSessionCookie, register, login } from './auth.js';
+import uploadRouter from './upload.js';
+import { initCronJobs } from './cron.js';
+import path from 'path';
+
+initCronJobs();
 
 const app = express();
 app.use(cors({ credentials: true, origin: true }));
 app.use(express.json({ limit: '1mb' }));
 
+app.use('/api', uploadRouter);
+app.use('/api/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/auth/dev-login', devLogin);
+app.post('/api/auth/register', register);
+app.post('/api/auth/login', login);
 
 app.post('/api/auth/logout', (req, res) => {
   res.setHeader('Set-Cookie', clearSessionCookie());

@@ -1,39 +1,32 @@
-import crypto from 'node:crypto';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import { z } from 'zod';
-import { ensureUserByIdentity, getUserById } from './store.js';
+import { getUserById, getUserByEmail, createUser } from './store.js';
 
 const COOKIE_NAME = 'workflow_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 
-const loginSchema = z.object({
+const registerSchema = z.object({
   displayName: z.string().trim().min(2).max(80),
-  email: z.string().trim().email().max(320).optional().or(z.literal('')),
+  email: z.string().trim().email().max(320),
+  password: z.string().min(8),
   role: z.enum(['USER', 'REVIEWER', 'APPROVER', 'ADMIN']).default('USER'),
   department: z.string().trim().min(0).max(80).optional().default('')
+});
+
+const loginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string()
 });
 
 function getSessionSecret() {
   return process.env.SESSION_SECRET ?? 'development-only-change-me';
 }
 
-function base64UrlEncode(value) {
-  return Buffer.from(JSON.stringify(value)).toString('base64url');
-}
-
-function base64UrlDecode(value) {
-  return JSON.parse(Buffer.from(value, 'base64url').toString('utf8'));
-}
-
-function sign(payload) {
-  return crypto.createHmac('sha256', getSessionSecret()).update(payload).digest('base64url');
-}
-
 function createToken(user) {
-  const payload = base64UrlEncode({
-    sub: user.id,
-    exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
+  return jwt.sign({ sub: user.id }, getSessionSecret(), {
+    expiresIn: SESSION_TTL_SECONDS
   });
-  return `${payload}.${sign(payload)}`;
 }
 
 function parseCookies(header) {
@@ -63,14 +56,9 @@ export async function authenticate(req, res, next) {
     const token = parseCookies(req.headers.cookie)[COOKIE_NAME];
     if (!token) return res.status(401).json({ error: 'UNAUTHENTICATED' });
 
-    const [payloadPart, signature] = token.split('.');
-    if (!payloadPart || !signature || signature !== sign(payloadPart)) {
+    const payload = jwt.verify(token, getSessionSecret());
+    if (!payload.sub) {
       return res.status(401).json({ error: 'INVALID_SESSION' });
-    }
-
-    const payload = base64UrlDecode(payloadPart);
-    if (!payload.sub || payload.exp < Math.floor(Date.now() / 1000)) {
-      return res.status(401).json({ error: 'SESSION_EXPIRED' });
     }
 
     const user = await getUserById(payload.sub);
@@ -79,6 +67,9 @@ export async function authenticate(req, res, next) {
     req.user = user;
     next();
   } catch (err) {
+    if (err instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({ error: 'INVALID_SESSION' });
+    }
     next(err);
   }
 }
@@ -91,18 +82,46 @@ export function requireRole(...roles) {
   };
 }
 
-export async function devLogin(req, res, next) {
+export async function register(req, res, next) {
   try {
-    const body = loginSchema.parse(req.body);
-    const user = await ensureUserByIdentity({
+    const body = registerSchema.parse(req.body);
+    const existing = await getUserByEmail(body.email);
+    if (existing) {
+      return res.status(400).json({ error: 'EMAIL_IN_USE' });
+    }
+
+    const passwordHash = await bcrypt.hash(body.password, 10);
+    const user = await createUser({
       displayName: body.displayName,
-      email: body.email || null,
+      email: body.email,
+      passwordHash,
       role: body.role,
-      department: body.department || null
+      department: body.department
     });
 
     res.setHeader('Set-Cookie', sessionCookie(createToken(user)));
-    res.json({ user });
+    res.json({ user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role, department: user.department } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function login(req, res, next) {
+  try {
+    const body = loginSchema.parse(req.body);
+    const user = await getUserByEmail(body.email);
+    
+    if (!user || !user.passwordHash) {
+      return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+    }
+
+    const isValid = await bcrypt.compare(body.password, user.passwordHash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'INVALID_CREDENTIALS' });
+    }
+
+    res.setHeader('Set-Cookie', sessionCookie(createToken(user)));
+    res.json({ user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role, department: user.department } });
   } catch (err) {
     next(err);
   }
