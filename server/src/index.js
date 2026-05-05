@@ -126,7 +126,7 @@ app.post('/api/requests/:id/delegate', authenticate, async (req, res, next) => {
     const schema = z.object({
       displayName: z.string().trim().min(2).max(80),
       email: z.string().trim().email().max(320).optional().or(z.literal('')),
-      role: z.enum(['REVIEWER', 'APPROVER']).default('REVIEWER'),
+      role: z.enum(['USER', 'ADMIN']).default('USER'),
       department: z.string().trim().min(0).max(80).optional().default(''),
       note: z.string().trim().min(0).max(500).optional()
     });

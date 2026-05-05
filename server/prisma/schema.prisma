@@ -9,17 +9,15 @@ datasource db {
 
 enum Role {
   USER
-  REVIEWER
-  APPROVER
   ADMIN
 }
 
 enum RequestStatus {
-  REQUEST
-  REVIEW
+  PENDING_MANAGER
+  PENDING_DEPARTMENT
   NEEDS_INFO
-  APPROVE
-  ARCHIVE
+  APPROVED
+  ARCHIVED
   REJECTED
 }
 
@@ -30,17 +28,22 @@ enum AuditAction {
 }
 
 model User {
-  id          String            @id @default(cuid())
-  displayName String
-  email       String?           @unique
-  passwordHash String?
-  role        Role              @default(USER)
-  department  String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  requests    WorkflowRequest[] @relation("SubmittedRequests")
+  id               String            @id @default(cuid())
+  displayName      String
+  email            String?           @unique
+  passwordHash     String?
+  role             Role              @default(USER)
+  department       String?
+  isDepartmentHead Boolean           @default(false)
+  managerId        String?
+  manager          User?             @relation("UserManager", fields: [managerId], references: [id])
+  subordinates     User[]            @relation("UserManager")
+  
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  requests         WorkflowRequest[] @relation("SubmittedRequests")
   assignedRequests WorkflowRequest[] @relation("AssignedRequests")
-  auditLogs   RequestAuditLog[]
+  auditLogs        RequestAuditLog[]
 
   @@index([displayName])
 }
@@ -51,7 +54,7 @@ model WorkflowRequest {
   description String            @default("")
   category    String            @default("GENERAL")
   amountCents Int?
-  status      RequestStatus     @default(REQUEST)
+  status      RequestStatus     @default(PENDING_MANAGER)
   isDeleted   Boolean           @default(false)
   dueAt       DateTime?
   createdAt   DateTime          @default(now())

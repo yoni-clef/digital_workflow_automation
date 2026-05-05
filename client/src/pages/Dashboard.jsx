@@ -1,23 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createRequest, delegateRequest, listRequests, transitionRequest, uploadAttachment } from '../api';
 import { useAuth } from '../AuthContext';
+import { filterRequests, sortRequests } from '../utils';
 import { Paperclip, Filter, ArrowDownWideNarrow } from 'lucide-react';
 
 const nextActionByStatus = {
-  REQUEST: { action: 'REVIEW', label: 'Send to Review', roles: ['REVIEWER', 'ADMIN'] },
-  REVIEW: { action: 'APPROVE', label: 'Approve', roles: ['APPROVER', 'ADMIN'] },
-  NEEDS_INFO: { action: 'RESUBMIT', label: 'Resubmit', roles: ['USER', 'ADMIN'] },
-  APPROVE: { action: 'ARCHIVE', label: 'Archive', roles: ['APPROVER', 'ADMIN'] },
-  ARCHIVE: null,
+  PENDING_MANAGER: { action: 'REVIEW', label: 'Manager Approve', required: 'MANAGER' },
+  PENDING_DEPARTMENT: { action: 'APPROVE', label: 'Dept Approve', required: 'DEPT_HEAD' },
+  NEEDS_INFO: { action: 'RESUBMIT', label: 'Resubmit', required: 'SUBMITTER' },
+  APPROVED: { action: 'ARCHIVE', label: 'Archive', required: 'DEPT_HEAD' },
+  ARCHIVED: null,
   REJECTED: null,
 };
 
-const rejectRoles = ['REVIEWER', 'APPROVER', 'ADMIN'];
-const infoRoles = ['REVIEWER', 'APPROVER', 'ADMIN'];
-const delegateRoles = ['REVIEWER', 'APPROVER', 'ADMIN'];
+function canActOnRequest(user, item, step) {
+  if (!user || user.role === 'ADMIN') return true;
+  if (!step) return false;
 
-function canUseRole(user, roles) {
-  return user && roles.includes(user.role);
+  if (step.required === 'SUBMITTER') {
+    return item.submitter?.id === user.id;
+  }
+  if (step.required === 'MANAGER') {
+    return item.submitter?.managerId === user.id || item.assignedTo?.id === user.id;
+  }
+  if (step.required === 'DEPT_HEAD') {
+    return (user.isDepartmentHead && item.submitter?.department === user.department) || item.assignedTo?.id === user.id;
+  }
+  return false;
 }
 
 export default function Dashboard() {
@@ -27,7 +36,7 @@ export default function Dashboard() {
   const [error, setError] = useState('');
 
   const [activeTab, setActiveTab] = useState(
-    user?.role === 'ADMIN' ? 'ADMIN' : (['REVIEWER', 'APPROVER'].includes(user?.role) ? 'INBOX' : 'MY_REQUESTS')
+    user?.role === 'ADMIN' ? 'ADMIN' : 'MY_REQUESTS'
   );
 
   const [title, setTitle] = useState('');
@@ -37,7 +46,7 @@ export default function Dashboard() {
   const [note, setNote] = useState('');
   const [delegateName, setDelegateName] = useState('');
   const [delegateEmail, setDelegateEmail] = useState('');
-  const [delegateRole, setDelegateRole] = useState('REVIEWER');
+  const [delegateRole, setDelegateRole] = useState('USER');
   const [file, setFile] = useState(null);
 
   const [filterStatus, setFilterStatus] = useState('ALL');
@@ -51,21 +60,16 @@ export default function Dashboard() {
     } else if (activeTab === 'INBOX') {
       list = list.filter(i => {
         const step = nextActionByStatus[i.status];
-        if (step && canUseRole(user, step.roles)) return true;
+        if (canActOnRequest(user, i, step)) return true;
         if (i.assignedTo && i.assignedTo.email === user?.email) return true;
+        // if user is manager or dept head of this, let them see it in inbox if pending
+        if (i.status === 'PENDING_MANAGER' && i.submitter?.managerId === user?.id) return true;
+        if (i.status === 'PENDING_DEPARTMENT' && user?.isDepartmentHead && i.submitter?.department === user?.department) return true;
         return false;
       });
     }
 
-    return list
-      .filter(i => filterStatus === 'ALL' || i.status === filterStatus)
-      .filter(i => filterCategory === 'ALL' || i.category === filterCategory)
-      .sort((a, b) => {
-        if (sortBy === 'amountCents') {
-          return (b.amountCents || 0) - (a.amountCents || 0);
-        }
-        return new Date(b.updatedAt) - new Date(a.updatedAt);
-      });
+    return sortRequests(filterRequests(list, { status: filterStatus, category: filterCategory }), sortBy);
   }, [items, filterStatus, filterCategory, sortBy, activeTab, user]);
 
   const canCreate = useMemo(() => {
@@ -171,25 +175,23 @@ export default function Dashboard() {
 
       {/* Tabs Navigation */}
       <div className="flex gap-6 border-b border-gray-800 mb-8">
-        <button 
-          onClick={() => setActiveTab('MY_REQUESTS')} 
+        <button
+          onClick={() => setActiveTab('MY_REQUESTS')}
           className={`pb-3 font-medium transition-colors ${activeTab === 'MY_REQUESTS' ? 'border-b-2 border-indigo-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}
         >
           My Requests
         </button>
-        
-        {['REVIEWER', 'APPROVER', 'ADMIN'].includes(user?.role) && (
-          <button 
-            onClick={() => setActiveTab('INBOX')} 
-            className={`pb-3 font-medium transition-colors ${activeTab === 'INBOX' ? 'border-b-2 border-indigo-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}
-          >
-            Inbox (Action Required)
-          </button>
-        )}
+
+        <button
+          onClick={() => setActiveTab('INBOX')}
+          className={`pb-3 font-medium transition-colors ${activeTab === 'INBOX' ? 'border-b-2 border-indigo-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+        >
+          Inbox (Team / Action Required)
+        </button>
 
         {user?.role === 'ADMIN' && (
-          <button 
-            onClick={() => setActiveTab('ADMIN')} 
+          <button
+            onClick={() => setActiveTab('ADMIN')}
             className={`pb-3 font-medium transition-colors ${activeTab === 'ADMIN' ? 'border-b-2 border-indigo-500 text-white' : 'text-gray-400 hover:text-gray-200'}`}
           >
             Admin View
@@ -199,74 +201,74 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         {(activeTab === 'MY_REQUESTS' || activeTab === 'ADMIN') && (
-        <section className="panel bg-gray-900 border border-gray-800 p-6 rounded-xl col-span-2">
-          <h2 className="text-xl font-bold mb-4">Create request</h2>
-          <form className="space-y-4" onSubmit={onCreate}>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Title</label>
-              <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Purchase new laptop" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Description (optional)</label>
-              <textarea className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 h-20" value={description} onChange={(e) => setDescription(e.target.value)} />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
+          <section className="panel bg-gray-900 border border-gray-800 p-6 rounded-xl col-span-2">
+            <h2 className="text-xl font-bold mb-4">Create request</h2>
+            <form className="space-y-4" onSubmit={onCreate}>
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">Category</label>
-                <select className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={category} onChange={(e) => setCategory(e.target.value)}>
-                  <option value="GENERAL">General</option>
-                  <option value="HARDWARE">Hardware</option>
-                  <option value="SOFTWARE">Software</option>
-                  <option value="FINANCE">Finance</option>
-                  <option value="HR">HR</option>
-                </select>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Title</label>
+                <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Purchase new laptop" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-400 mb-1">Amount</label>
-                <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01" placeholder="0.00" />
+                <label className="block text-sm font-medium text-gray-400 mb-1">Description (optional)</label>
+                <textarea className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 h-20" value={description} onChange={(e) => setDescription(e.target.value)} />
               </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Attachment</label>
-              <div className="relative">
-                <input type="file" onChange={(e) => setFile(e.target.files[0])} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-sm text-gray-400 file:mr-4 file:py-1.5 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-indigo-600/10 file:text-indigo-400 hover:file:bg-indigo-600/20 cursor-pointer" />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-1">Category</label>
+                  <select className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={category} onChange={(e) => setCategory(e.target.value)}>
+                    <option value="GENERAL">General</option>
+                    <option value="HARDWARE">Hardware</option>
+                    <option value="SOFTWARE">Software</option>
+                    <option value="FINANCE">Finance</option>
+                    <option value="HR">HR</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-400 mb-1">Amount</label>
+                  <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={amount} onChange={(e) => setAmount(e.target.value)} type="number" min="0" step="0.01" placeholder="0.00" />
+                </div>
               </div>
-            </div>
 
-            <div className="flex gap-3 pt-2">
-              <button className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded font-medium disabled:opacity-50" type="submit" disabled={!canCreate || loading}>{loading ? 'Creating...' : 'Create'}</button>
-              <button className="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2 rounded font-medium" type="button" onClick={refresh} disabled={loading}>Refresh</button>
-            </div>
-          </form>
-        </section>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Attachment</label>
+                <div className="relative">
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2 text-sm text-gray-400 file:mr-4 file:py-1.5 file:px-4 file:rounded file:border-0 file:text-sm file:font-medium file:bg-indigo-600/10 file:text-indigo-400 hover:file:bg-indigo-600/20 cursor-pointer" />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button className="bg-indigo-600 hover:bg-indigo-500 text-white px-5 py-2 rounded font-medium disabled:opacity-50" type="submit" disabled={!canCreate || loading}>{loading ? 'Creating...' : 'Create'}</button>
+                <button className="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2 rounded font-medium" type="button" onClick={refresh} disabled={loading}>Refresh</button>
+              </div>
+            </form>
+          </section>
         )}
 
         {(activeTab === 'INBOX' || activeTab === 'ADMIN') && (
-        <section className={`panel bg-gray-900 border border-gray-800 p-6 rounded-xl ${activeTab === 'INBOX' ? 'col-span-3' : ''}`}>
-          <h2 className="text-xl font-bold mb-4">Actions Setup</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Note (optional)</label>
-              <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Short note" />
+          <section className={`panel bg-gray-900 border border-gray-800 p-6 rounded-xl ${activeTab === 'INBOX' ? 'col-span-3' : ''}`}>
+            <h2 className="text-xl font-bold mb-4">Actions Setup</h2>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Note (optional)</label>
+                <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={note} onChange={(e) => setNote(e.target.value)} placeholder="Short note" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Delegate role</label>
+                <select className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateRole} onChange={(e) => setDelegateRole(e.target.value)}>
+                  <option value="USER">User</option>
+                  <option value="ADMIN">Admin</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Delegate name</label>
+                <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateName} onChange={(e) => setDelegateName(e.target.value)} placeholder="Backup approver" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-400 mb-1">Delegate email</label>
+                <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateEmail} onChange={(e) => setDelegateEmail(e.target.value)} placeholder="backup@company.com" />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Delegate role</label>
-              <select className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateRole} onChange={(e) => setDelegateRole(e.target.value)}>
-                <option value="REVIEWER">Reviewer</option>
-                <option value="APPROVER">Approver</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Delegate name</label>
-              <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateName} onChange={(e) => setDelegateName(e.target.value)} placeholder="Backup approver" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-400 mb-1">Delegate email</label>
-              <input className="w-full bg-gray-950 border border-gray-800 rounded px-3 py-2" value={delegateEmail} onChange={(e) => setDelegateEmail(e.target.value)} placeholder="backup@company.com" />
-            </div>
-          </div>
-        </section>
+          </section>
         )}
       </div>
 
@@ -276,18 +278,18 @@ export default function Dashboard() {
             <h2 className="text-xl font-bold">Requests</h2>
             {error && <div className="text-red-400 mt-2 text-sm">{error}</div>}
           </div>
-          
+
           <div className="flex gap-3 items-center">
             <div className="flex items-center gap-2 bg-gray-950 border border-gray-800 rounded px-3 py-1.5">
               <Filter className="w-4 h-4 text-gray-400" />
               <select className="bg-transparent text-sm text-gray-300 outline-none" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                 <option value="ALL">All Status</option>
-                <option value="REQUEST">Requested</option>
-                <option value="REVIEW">In Review</option>
-                <option value="APPROVE">Approved</option>
+                <option value="PENDING_MANAGER">Pending Manager</option>
+                <option value="PENDING_DEPARTMENT">Pending Department</option>
+                <option value="APPROVED">Approved</option>
                 <option value="NEEDS_INFO">Needs Info</option>
                 <option value="REJECTED">Rejected</option>
-                <option value="ARCHIVE">Archived</option>
+                <option value="ARCHIVED">Archived</option>
               </select>
             </div>
             <div className="flex items-center gap-2 bg-gray-950 border border-gray-800 rounded px-3 py-1.5">
@@ -334,10 +336,10 @@ export default function Dashboard() {
               <tbody className="text-sm divide-y divide-gray-800">
                 {filteredItems.map((item) => {
                   const step = nextActionByStatus[item.status]
-                  const canAdvance = step && canUseRole(user, step.roles)
-                  const canReject = step && canUseRole(user, rejectRoles)
-                  const canRequestInfo = ['REVIEW', 'APPROVE'].includes(item.status) && canUseRole(user, infoRoles)
-                  const canDelegate = step && canUseRole(user, delegateRoles)
+                  const canAdvance = canActOnRequest(user, item, step)
+                  const canReject = ['PENDING_MANAGER', 'PENDING_DEPARTMENT'].includes(item.status) && canAdvance
+                  const canRequestInfo = ['PENDING_MANAGER', 'PENDING_DEPARTMENT'].includes(item.status) && canAdvance
+                  const canDelegate = ['PENDING_MANAGER', 'PENDING_DEPARTMENT'].includes(item.status) && canAdvance
                   const amountText = Number.isInteger(item.amountCents) ? (item.amountCents / 100).toFixed(2) : '-'
                   return (
                     <tr key={item.id} className="hover:bg-gray-800/30 transition-colors">
@@ -352,12 +354,12 @@ export default function Dashboard() {
                       </td>
                       <td className="p-4">
                         <span className={`px-2.5 py-1 rounded-full text-xs font-semibold
-                          ${item.status === 'REQUEST' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : ''}
-                          ${item.status === 'REVIEW' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' : ''}
-                          ${item.status === 'APPROVE' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : ''}
+                          ${item.status === 'PENDING_MANAGER' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : ''}
+                          ${item.status === 'PENDING_DEPARTMENT' ? 'bg-yellow-500/10 text-yellow-400 border border-yellow-500/20' : ''}
+                          ${item.status === 'APPROVED' ? 'bg-green-500/10 text-green-400 border border-green-500/20' : ''}
                           ${item.status === 'REJECTED' ? 'bg-red-500/10 text-red-400 border border-red-500/20' : ''}
                           ${item.status === 'NEEDS_INFO' ? 'bg-orange-500/10 text-orange-400 border border-orange-500/20' : ''}
-                          ${item.status === 'ARCHIVE' ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20' : ''}
+                          ${item.status === 'ARCHIVED' ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20' : ''}
                         `}>
                           {item.status}
                         </span>

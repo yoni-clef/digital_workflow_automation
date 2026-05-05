@@ -10,4 +10,9 @@ export default defineConfig({
       '/api': 'http://localhost:4000',
     },
   },
+  test: {
+    environment: 'node',
+    globals: true,
+    include: ['src/__tests__/**/*.test.{js,jsx}'],
+  },
 })

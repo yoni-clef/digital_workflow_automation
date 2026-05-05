@@ -12,14 +12,21 @@ export default function Register() {
     email: '',
     password: '',
     role: 'USER',
-    department: ''
+    department: '',
+    managerId: '',
+    isDepartmentHead: false
   });
-  const [error, setError] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
 
   const handleChange = (e) => {
-    setFormData(prev => ({ ...prev, [e.target.name]: e.target.value }));
+    const { name, value, type, checked } = e.target;
+    setFormData(prev => ({ 
+      ...prev, 
+      [name]: type === 'checkbox' ? checked : value 
+    }));
   };
+
+  const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -27,10 +34,15 @@ export default function Register() {
     setIsLoading(true);
     
     try {
-      await register(formData);
+      const payload = { ...formData };
+      if (!payload.managerId) delete payload.managerId;
+      await register(payload);
       navigate('/');
     } catch (err) {
-      setError(err?.message || 'Failed to register');
+      let msg = err?.message || 'Failed to register';
+      if (msg === 'INVALID_MANAGER_ID') msg = "That Manager ID doesn't exist. Please check the ID and try again.";
+      if (msg === 'EMAIL_IN_USE') msg = "That email is already registered.";
+      setError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -58,13 +70,13 @@ export default function Register() {
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Full Name</label>
             <div className="relative">
-              <User className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
               <input 
                 type="text" 
                 name="displayName"
                 value={formData.displayName}
                 onChange={handleChange}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-10 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 placeholder="John Doe"
                 required
                 minLength={2}
@@ -75,13 +87,13 @@ export default function Register() {
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Email Address</label>
             <div className="relative">
-              <Mail className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <Mail className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
               <input 
                 type="email" 
                 name="email"
                 value={formData.email}
                 onChange={handleChange}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-10 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 placeholder="john@company.com"
                 required
               />
@@ -91,13 +103,13 @@ export default function Register() {
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Password</label>
             <div className="relative">
-              <Key className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+              <Key className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
               <input 
                 type="password" 
                 name="password"
                 value={formData.password}
                 onChange={handleChange}
-                className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-10 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 placeholder="Min. 8 characters"
                 required
                 minLength={8}
@@ -109,17 +121,15 @@ export default function Register() {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Role</label>
               <div className="relative">
-                <BadgeCheck className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <BadgeCheck className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
                 <select 
                   name="role"
                   value={formData.role}
                   onChange={handleChange}
-                  className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-10 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all appearance-none"
+                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all appearance-none"
                 >
-                  <option value="USER">User</option>
-                  <option value="REVIEWER">Reviewer</option>
-                  <option value="APPROVER">Approver</option>
-                  <option value="ADMIN">Admin</option>
+                  <option value="USER">User (Employee)</option>
+                  <option value="ADMIN">System Admin</option>
                 </select>
               </div>
             </div>
@@ -127,16 +137,46 @@ export default function Register() {
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Department</label>
               <div className="relative">
-                <Briefcase className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                <Briefcase className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
                 <input 
                   type="text" 
                   name="department"
                   value={formData.department}
                   onChange={handleChange}
-                  className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-10 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                   placeholder="e.g. IT"
                 />
               </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Manager ID (Optional)</label>
+              <div className="relative">
+                <UserPlus className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
+                <input 
+                  type="text" 
+                  name="managerId"
+                  value={formData.managerId}
+                  onChange={handleChange}
+                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                  placeholder="Paste Manager's User ID"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-1.5 flex items-center pt-6">
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
+                <input 
+                  type="checkbox" 
+                  name="isDepartmentHead"
+                  checked={formData.isDepartmentHead}
+                  onChange={handleChange}
+                  className="w-4 h-4 bg-gray-950 border-gray-800 text-indigo-500 rounded focus:ring-indigo-500 focus:ring-1 transition-all"
+                />
+                I am a Department Head
+              </label>
             </div>
           </div>
 

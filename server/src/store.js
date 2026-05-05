@@ -1,35 +1,60 @@
 import { PrismaClient } from '@prisma/client';
+import { sendNotification } from './notification.js';
 
 const prisma = new PrismaClient();
 
-const allowedTransitions = {
-  REQUEST: { REVIEW: 'REVIEW', REJECT: 'REJECTED' },
-  REVIEW: { APPROVE: 'APPROVE', REQUEST_INFO: 'NEEDS_INFO', REJECT: 'REJECTED' },
-  NEEDS_INFO: { RESUBMIT: 'REVIEW', REJECT: 'REJECTED' },
-  APPROVE: { ARCHIVE: 'ARCHIVE', REQUEST_INFO: 'NEEDS_INFO', REJECT: 'REJECTED' },
-  ARCHIVE: {},
+export const allowedTransitions = {
+  PENDING_MANAGER: { REVIEW: 'PENDING_DEPARTMENT', REJECT: 'REJECTED', REQUEST_INFO: 'NEEDS_INFO' },
+  PENDING_DEPARTMENT: { APPROVE: 'APPROVED', REQUEST_INFO: 'NEEDS_INFO', REJECT: 'REJECTED' },
+  NEEDS_INFO: { RESUBMIT: 'PENDING_MANAGER', REJECT: 'REJECTED' },
+  APPROVED: { ARCHIVE: 'ARCHIVED', REQUEST_INFO: 'NEEDS_INFO', REJECT: 'REJECTED' },
+  ARCHIVED: {},
   REJECTED: {}
-};
-
-const transitionRoles = {
-  REVIEW: ['REVIEWER', 'ADMIN'],
-  RESUBMIT: ['USER', 'ADMIN'],
-  APPROVE: ['APPROVER', 'ADMIN'],
-  ARCHIVE: ['APPROVER', 'ADMIN'],
-  REQUEST_INFO: ['REVIEWER', 'APPROVER', 'ADMIN'],
-  REJECT: ['REVIEWER', 'APPROVER', 'ADMIN']
 };
 
 const REVIEW_SLA_DAYS = 7;
 
-function canUseAction(user, action) {
-  return transitionRoles[action]?.includes(user.role) ?? false;
-}
-
-function canActOnRequest(user, request) {
+// Pure RBAC function — exported so it can be unit/property tested independently.
+// Implements the authorization matrix from the design document.
+// request must have: { submitterId, assignedToId, status, submitter: { managerId, department } }
+export function canActOnRequest(user, request, action) {
   if (user.role === 'ADMIN') return true;
+
+  // Delegated user can perform any action on the request they are assigned to
   if (request.assignedToId === user.id) return true;
-  if (user.department && request.submitter.department === user.department) return true;
+
+  // Only the original submitter may RESUBMIT
+  if (action === 'RESUBMIT') {
+    return request.submitterId === user.id;
+  }
+
+  // Manager of the submitter may act on PENDING_MANAGER requests
+  // and may also REQUEST_INFO, REJECT, or DELEGATE on any status where they are the actor
+  if (request.status === 'PENDING_MANAGER' && request.submitter.managerId === user.id) {
+    return true;
+  }
+
+  // Department head (same department as submitter) may act on PENDING_DEPARTMENT and APPROVED requests
+  // and may also REQUEST_INFO, REJECT, or DELEGATE on those statuses
+  const isDeptHeadForSubmitter =
+    user.isDepartmentHead &&
+    user.department &&
+    request.submitter.department === user.department;
+
+  if (
+    (request.status === 'PENDING_DEPARTMENT' || request.status === 'APPROVED') &&
+    isDeptHeadForSubmitter
+  ) {
+    return true;
+  }
+
+  // REQUEST_INFO, REJECT, DELEGATE: manager can act on PENDING_MANAGER;
+  // dept head can act on PENDING_DEPARTMENT and APPROVED (already covered above).
+  // NEEDS_INFO: manager of submitter may REJECT
+  if (request.status === 'NEEDS_INFO' && request.submitter.managerId === user.id) {
+    if (action === 'REJECT') return true;
+  }
+
   return false;
 }
 
@@ -43,12 +68,23 @@ function toApiRequest(request) {
     category: request.category,
     amountCents: request.amountCents,
     createdBy: request.submitter.displayName,
-    assignedTo: request.assignedTo?.displayName ?? null,
+    submitter: {
+      id: request.submitter.id,
+      displayName: request.submitter.displayName,
+      email: request.submitter.email,
+      department: request.submitter.department,
+      managerId: request.submitter.managerId
+    },
+    assignedTo: request.assignedTo ? {
+      id: request.assignedTo.id,
+      displayName: request.assignedTo.displayName,
+      email: request.assignedTo.email
+    } : null,
     status: request.status,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt,
     dueAt,
-    isOverdue: Boolean(dueAt && new Date(dueAt).getTime() < Date.now() && !['ARCHIVE', 'REJECTED'].includes(request.status)),
+    isOverdue: Boolean(dueAt && new Date(dueAt).getTime() < Date.now() && ['PENDING_MANAGER', 'PENDING_DEPARTMENT'].includes(request.status)),
     history: request.history.map((entry) => ({
       id: entry.id,
       at: entry.createdAt,
@@ -83,7 +119,7 @@ export async function getUserByEmail(email) {
   });
 }
 
-export async function createUser({ displayName, email, passwordHash, role = 'USER', department = null }) {
+export async function createUser({ displayName, email, passwordHash, role = 'USER', department = null, managerId = null, isDepartmentHead = false }) {
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedName = displayName.trim();
 
@@ -93,7 +129,9 @@ export async function createUser({ displayName, email, passwordHash, role = 'USE
       email: normalizedEmail,
       passwordHash,
       role,
-      department
+      department,
+      managerId,
+      isDepartmentHead
     }
   });
 }
@@ -155,36 +193,55 @@ function addDays(date, days) {
   return next;
 }
 
-function getConditionalInitialStatus({ category, amountCents }) {
-  if (category === 'HARDWARE' && Number.isInteger(amountCents) && amountCents < 50000) {
-    return 'APPROVE';
+export function getConditionalInitialStatus({ category, amountCents, submitter }) {
+  // Auto-approve low-value hardware requests (Requirement 4.1)
+  if (category === 'HARDWARE' && typeof amountCents === 'number' && amountCents < 50000) {
+    return 'APPROVED';
   }
-
-  return 'REQUEST';
+  // If the user has no manager, directly to PENDING_DEPARTMENT
+  if (!submitter.managerId) {
+    return 'PENDING_DEPARTMENT';
+  }
+  return 'PENDING_MANAGER';
 }
 
 function getDueAtForStatus(status) {
-  return status === 'REVIEW' ? addDays(new Date(), REVIEW_SLA_DAYS) : null;
+  return ['PENDING_MANAGER', 'PENDING_DEPARTMENT'].includes(status) ? addDays(new Date(), REVIEW_SLA_DAYS) : null;
+}
+
+// Pure visibility predicate — exported for testing.
+// Returns true if the given non-ADMIN user should be able to see the request.
+export function isVisibleToUser(user, request) {
+  if (user.role === 'ADMIN') return true;
+  if (request.submitterId === user.id) return true;
+  if (request.assignedToId === user.id) return true;
+  if (request.submitter.managerId === user.id) return true;
+  if (user.isDepartmentHead && user.department && request.submitter.department === user.department) return true;
+  return false;
 }
 
 export async function listRequests({ user }) {
-  const reviewerVisibility = user.department
-    ? {
-        OR: [
-          { assignedToId: user.id },
-          { submitter: { department: user.department } }
-        ]
-      }
-    : { assignedToId: user.id };
+  let where = {};
 
-  const where = user.role === 'ADMIN'
-    ? { isDeleted: false }
-    : user.role === 'USER'
-      ? { isDeleted: false, submitterId: user.id }
-      : {
-          isDeleted: false,
-          ...reviewerVisibility
-        };
+  if (user.role === 'ADMIN') {
+    where = { isDeleted: false };
+  } else {
+    // A regular user can see:
+    // 1. Their own requests
+    // 2. Requests assigned directly to them
+    // 3. Requests from folks they manage
+    // 4. Requests in their department if they are a department head
+
+    where = {
+      isDeleted: false,
+      OR: [
+        { submitterId: user.id },
+        { assignedToId: user.id },
+        { submitter: { managerId: user.id } },
+        ...(user.isDepartmentHead ? [{ submitter: { department: user.department } }] : [])
+      ]
+    };
+  }
 
   const requests = await prisma.workflowRequest.findMany({
     where,
@@ -203,19 +260,19 @@ export async function getRequestById(id, { user }) {
 
   if (!request) return null;
   if (user.role === 'ADMIN') return toApiRequest(request);
-  if (user.role === 'USER' && request.submitterId === user.id) return toApiRequest(request);
-  if (user.role !== 'USER' && request.assignedToId === user.id) return toApiRequest(request);
-  if (user.role !== 'USER' && user.department && request.submitter.department === user.department) {
-    return toApiRequest(request);
-  }
+  if (request.submitterId === user.id) return toApiRequest(request);
+  if (request.assignedToId === user.id) return toApiRequest(request);
+  if (request.submitter.managerId === user.id) return toApiRequest(request);
+  if (user.isDepartmentHead && request.submitter.department === user.department) return toApiRequest(request);
 
   return null;
 }
 
 export async function createRequest({ title, description, category, amountCents, user, context = {} }) {
   const normalizedCategory = category ?? 'GENERAL';
-  const initialStatus = getConditionalInitialStatus({ category: normalizedCategory, amountCents });
+  const initialStatus = getConditionalInitialStatus({ category: normalizedCategory, amountCents, submitter: user });
   const dueAt = getDueAtForStatus(initialStatus);
+  const isAutoApproved = initialStatus === 'APPROVED';
 
   const request = await prisma.workflowRequest.create({
     data: {
@@ -232,22 +289,11 @@ export async function createRequest({ title, description, category, amountCents,
             actorId: user.id,
             action: 'CREATE',
             fromStatus: null,
-            toStatus: 'REQUEST',
-            note: 'Created',
+            toStatus: initialStatus,
+            note: isAutoApproved ? 'Auto-approved: HARDWARE request under $500' : 'Created',
             ipAddress: context.ipAddress,
             userAgent: context.userAgent
-          },
-          ...(initialStatus === 'APPROVE'
-            ? [{
-                actorId: user.id,
-                action: 'TRANSITION',
-                fromStatus: 'REQUEST',
-                toStatus: 'APPROVE',
-                note: 'Auto-approved by policy: hardware request under 500.00',
-                ipAddress: context.ipAddress,
-                userAgent: context.userAgent
-              }]
-            : [])
+          }
         ]
       }
     },
@@ -261,17 +307,15 @@ export async function transitionRequest({ id, action, user, note, context = {} }
   return prisma.$transaction(async (tx) => {
     const request = await tx.workflowRequest.findFirst({
       where: { id, isDeleted: false },
-      include: { submitter: true }
+      include: {
+        submitter: {
+          include: { manager: true }
+        }
+      }
     });
 
     if (!request) return { error: 'NOT_FOUND' };
-    if (!canUseAction(user, action)) return { error: 'FORBIDDEN' };
-    if (action === 'RESUBMIT' && request.submitterId !== user.id && user.role !== 'ADMIN') {
-      return { error: 'FORBIDDEN' };
-    }
-    if (user.role !== 'USER' && !canActOnRequest(user, request)) {
-      return { error: 'FORBIDDEN' };
-    }
+    if (!canActOnRequest(user, request, action)) return { error: 'FORBIDDEN' };
 
     const from = request.status;
     const to = allowedTransitions[from]?.[action] ?? null;
@@ -307,6 +351,52 @@ export async function transitionRequest({ id, action, user, note, context = {} }
       include: requestInclude
     });
 
+    // Send notifications after the DB write — failures must not abort the transition.
+    // Requirements 12.1, 12.2, 12.3, 12.4
+    try {
+      if (to === 'PENDING_MANAGER') {
+        // Notify the submitter's manager (Requirement 12.1)
+        const manager = request.submitter.manager;
+        if (manager?.email) {
+          await sendNotification(
+            manager.email,
+            `Action required: "${request.title}" is pending your review`,
+            `Hi ${manager.displayName},\n\nA request titled "${request.title}" has been submitted by ${request.submitter.displayName} and is awaiting your review.\n\nPlease log in to the workflow system to take action.`
+          );
+        }
+      } else if (to === 'PENDING_DEPARTMENT') {
+        // Notify the department head (Requirement 12.2)
+        const deptHead = await tx.user.findFirst({
+          where: {
+            isDepartmentHead: true,
+            department: request.submitter.department
+          }
+        });
+        if (deptHead?.email) {
+          await sendNotification(
+            deptHead.email,
+            `Action required: "${request.title}" is pending department approval`,
+            `Hi ${deptHead.displayName},\n\nA request titled "${request.title}" from ${request.submitter.displayName} requires department approval.\n\nPlease log in to the workflow system to take action.`
+          );
+        }
+      } else if (to === 'APPROVED' || to === 'REJECTED') {
+        // Notify the submitter (Requirement 12.3)
+        const submitter = request.submitter;
+        if (submitter?.email) {
+          const outcome = to === 'APPROVED' ? 'approved' : 'rejected';
+          await sendNotification(
+            submitter.email,
+            `Your request "${request.title}" has been ${outcome}`,
+            `Hi ${submitter.displayName},\n\nYour request titled "${request.title}" has been ${outcome}.\n\nPlease log in to the workflow system for more details.`
+          );
+        }
+      }
+    } catch (err) {
+      // Requirement 12.4: email failure must not prevent the transition from completing
+      // eslint-disable-next-line no-console
+      console.error('Notification error (non-fatal):', err);
+    }
+
     return { request: toApiRequest(updated) };
   });
 }
@@ -319,12 +409,12 @@ export async function delegateRequest({ id, assignee, user, note, context = {} }
     });
 
     if (!request) return { error: 'NOT_FOUND' };
-    if (!['REVIEWER', 'APPROVER', 'ADMIN'].includes(user.role)) return { error: 'FORBIDDEN' };
+    // Check terminal states before RBAC — Requirement 5.3 takes precedence
+    if (['ARCHIVED', 'REJECTED'].includes(request.status)) {
+      return { error: 'INVALID_TRANSITION', details: { from: request.status, action: 'DELEGATE' } };
+    }
     if (!canActOnRequest(user, request)) {
       return { error: 'FORBIDDEN' };
-    }
-    if (['ARCHIVE', 'REJECTED'].includes(request.status)) {
-      return { error: 'INVALID_TRANSITION', details: { from: request.status, action: 'DELEGATE' } };
     }
 
     const normalizedEmail = assignee.email?.trim().toLowerCase() || null;
