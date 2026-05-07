@@ -27,6 +27,12 @@ enum AuditAction {
   DELEGATE
 }
 
+enum ManagerRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 model User {
   id               String            @id @default(cuid())
   displayName      String
@@ -38,14 +44,21 @@ model User {
   managerId        String?
   manager          User?             @relation("UserManager", fields: [managerId], references: [id])
   subordinates     User[]            @relation("UserManager")
-  
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
   requests         WorkflowRequest[] @relation("SubmittedRequests")
   assignedRequests WorkflowRequest[] @relation("AssignedRequests")
   auditLogs        RequestAuditLog[]
+  attachments     Attachment[]
+  departmentHeads User[]             @relation("DepartmentHead")
+  managedBy        User?             @relation("DepartmentHead", fields: [departmentHeadId])
+  departmentHeadId String?
+  hasRequestedManager Boolean           @default(false)
+  managerRequestCreatedAt DateTime?
+  managerRequests  ManagerRequest[]     @relation("UserManagerRequests")
+  requestedByUsers ManagerRequest[]   @relation("RequestedManager")
+  reviewingRequests ManagerRequest[]   @relation("ReviewingAdmin")
 
   @@index([displayName])
+  @@index([email])
 }
 
 model WorkflowRequest {
@@ -71,10 +84,26 @@ model WorkflowRequest {
   @@index([assignedToId, dueAt])
 }
 
+model ManagerRequest {
+  id                  String              @id @default(cuid())
+  user                User                @relation("UserManagerRequests", fields: [userId], references: [id], onDelete: Cascade)
+  userId              String
+  requestedManager     User?               @relation("RequestedManager", fields: [requestedManagerId], references: [id])
+  requestedManagerId   String?
+  status              ManagerRequestStatus @default(PENDING)
+  reason              String?
+  createdAt           DateTime            @default(now())
+  reviewedAt          DateTime?
+  reviewedByAdmin      User?               @relation("ReviewingAdmin", fields: [reviewedByAdminId], references: [id])
+  reviewedByAdminId    String?
+  
+  @@unique([userId])
+}
+
 model RequestAuditLog {
   id          String          @id @default(cuid())
   requestId   Int
-  request     WorkflowRequest @relation(fields: [requestId], references: [id])
+  request     WorkflowRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
   actorId     String
   actor       User            @relation(fields: [actorId], references: [id])
   action      AuditAction

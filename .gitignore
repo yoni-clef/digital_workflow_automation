@@ -1,1 +1,3 @@
 /node_modules
+/.kiro
+/server/node_modules

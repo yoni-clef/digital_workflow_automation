@@ -10,10 +10,7 @@ const registerSchema = z.object({
   displayName: z.string().trim().min(2).max(80),
   email: z.string().trim().email().max(320),
   password: z.string().min(8),
-  role: z.enum(['USER', 'ADMIN']).default('USER'),
-  department: z.string().trim().min(0).max(80).optional().default(''),
-  isDepartmentHead: z.boolean().optional().default(false),
-  managerId: z.string().optional().nullable()
+  department: z.string().trim().min(0).max(80).optional().default('')
 });
 
 const loginSchema = z.object({
@@ -97,18 +94,15 @@ export async function register(req, res, next) {
       displayName: body.displayName,
       email: body.email,
       passwordHash,
-      role: body.role,
+      role: 'USER', // Always USER for self-registration
       department: body.department,
-      isDepartmentHead: body.isDepartmentHead,
-      managerId: body.managerId || null
+      isDepartmentHead: false, // Admin will assign later
+      managerId: null // Admin will assign later
     });
 
     res.setHeader('Set-Cookie', sessionCookie(createToken(user)));
     res.json({ user: { id: user.id, displayName: user.displayName, email: user.email, role: user.role, department: user.department, isDepartmentHead: user.isDepartmentHead, managerId: user.managerId } });
   } catch (err) {
-    if (err.code === 'P2003') {
-      return res.status(400).json({ error: 'INVALID_MANAGER_ID', message: 'The provided Manager ID does not exist.' });
-    }
     next(err);
   }
 }

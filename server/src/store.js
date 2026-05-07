@@ -107,6 +107,7 @@ function toApiRequest(request) {
   };
 }
 
+export async function listUsers() { return prisma.user.findMany({ select: { id: true, displayName: true, email: true, department: true, role: true, isDepartmentHead: true } }); }
 export async function getUserById(id) {
   return prisma.user.findUnique({
     where: { id }
@@ -134,6 +135,145 @@ export async function createUser({ displayName, email, passwordHash, role = 'USE
       isDepartmentHead
     }
   });
+}
+
+export async function updateUser(userId, { managerId, department, isDepartmentHead }) {
+  return prisma.user.update({
+    where: { id: userId },
+    data: {
+      ...(managerId !== undefined && { managerId }),
+      ...(department !== undefined && { department }),
+      ...(isDepartmentHead !== undefined && { isDepartmentHead })
+    }
+  });
+}
+
+// Manager Request functions
+export async function createManagerRequest({ userId, requestedManagerId, reason }) {
+  // Check if user already has a pending request
+  const existingRequest = await prisma.managerRequest.findFirst({
+    where: {
+      userId,
+      status: 'PENDING'
+    }
+  });
+
+  if (existingRequest) {
+    throw new Error('PENDING_MANAGER_REQUEST_EXISTS');
+  }
+
+  // Update user to indicate they have requested a manager
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      hasRequestedManager: true,
+      managerRequestCreatedAt: new Date()
+    }
+  });
+
+  return prisma.managerRequest.create({
+    data: {
+      userId,
+      requestedManagerId,
+      reason,
+      status: 'PENDING'
+    },
+    include: {
+      user: true,
+      requestedManager: true
+    }
+  });
+}
+
+export async function listManagerRequests() {
+  return prisma.managerRequest.findMany({
+    where: {
+      status: 'PENDING'
+    },
+    include: {
+      user: {
+        select: { id: true, displayName: true, email: true, department: true }
+      },
+      requestedManager: {
+        select: { id: true, displayName: true, email: true }
+      }
+    },
+    orderBy: { createdAt: 'asc' }
+  });
+}
+
+export async function approveManagerRequest(requestId, adminId, managerId) {
+  const request = await prisma.managerRequest.findUnique({
+    where: { id: requestId },
+    include: { user: true }
+  });
+
+  if (!request) {
+    throw new Error('MANAGER_REQUEST_NOT_FOUND');
+  }
+
+  if (request.status !== 'PENDING') {
+    throw new Error('MANAGER_REQUEST_ALREADY_PROCESSED');
+  }
+
+  // Update the request
+  const updatedRequest = await prisma.managerRequest.update({
+    where: { id: requestId },
+    data: {
+      status: 'APPROVED',
+      reviewedAt: new Date(),
+      reviewedByAdminId: adminId
+    }
+  });
+
+  // Update user with assigned manager
+  await prisma.user.update({
+    where: { id: request.userId },
+    data: {
+      managerId,
+      hasRequestedManager: false,
+      managerRequestCreatedAt: null
+    }
+  });
+
+  return updatedRequest;
+}
+
+export async function rejectManagerRequest(requestId, adminId, reason) {
+  const request = await prisma.managerRequest.findUnique({
+    where: { id: requestId },
+    include: { user: true }
+  });
+
+  if (!request) {
+    throw new Error('MANAGER_REQUEST_NOT_FOUND');
+  }
+
+  if (request.status !== 'PENDING') {
+    throw new Error('MANAGER_REQUEST_ALREADY_PROCESSED');
+  }
+
+  // Update the request
+  const updatedRequest = await prisma.managerRequest.update({
+    where: { id: requestId },
+    data: {
+      status: 'REJECTED',
+      reviewedAt: new Date(),
+      reviewedByAdminId: adminId,
+      reason
+    }
+  });
+
+  // Update user to remove manager request flag
+  await prisma.user.update({
+    where: { id: request.userId },
+    data: {
+      hasRequestedManager: false,
+      managerRequestCreatedAt: null
+    }
+  });
+
+  return updatedRequest;
 }
 
 export async function ensureUserByIdentity({ displayName, email, role = 'USER', department = null }) {
@@ -269,6 +409,11 @@ export async function getRequestById(id, { user }) {
 }
 
 export async function createRequest({ title, description, category, amountCents, user, context = {} }) {
+  // Check if user has an assigned manager or has requested one
+  if (!user.managerId && !user.hasRequestedManager) {
+    throw new Error('MANAGER_REQUIRED');
+  }
+
   const normalizedCategory = category ?? 'GENERAL';
   const initialStatus = getConditionalInitialStatus({ category: normalizedCategory, amountCents, submitter: user });
   const dueAt = getDueAtForStatus(initialStatus);
@@ -288,16 +433,15 @@ export async function createRequest({ title, description, category, amountCents,
           {
             actorId: user.id,
             action: 'CREATE',
-            fromStatus: null,
-            toStatus: initialStatus,
             note: isAutoApproved ? 'Auto-approved: HARDWARE request under $500' : 'Created',
             ipAddress: context.ipAddress,
-            userAgent: context.userAgent
+            userAgent: context.userAgent,
+            toStatus: initialStatus
           }
         ]
       }
     },
-    include: requestInclude
+    include: { history: true }
   });
 
   return toApiRequest(request);
@@ -315,7 +459,7 @@ export async function transitionRequest({ id, action, user, note, context = {} }
     });
 
     if (!request) return { error: 'NOT_FOUND' };
-    if (!canActOnRequest(user, request, action)) return { error: 'FORBIDDEN' };
+    console.log('user', user.id, 'req', request.submitter.managerId, request.status); if (!canActOnRequest(user, request, action)) return { error: 'FORBIDDEN' };
 
     const from = request.status;
     const to = allowedTransitions[from]?.[action] ?? null;

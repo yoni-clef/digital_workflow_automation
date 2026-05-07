@@ -1,0 +1,17 @@
+@startuml
+participant "Cron Job" as CRON
+participant "Node.js API" as BE
+database "PostgreSQL" as DB
+participant "Notification Service" as NOTIF
+
+CRON -> BE : Trigger SLA Check
+BE -> DB : Query overdue requests
+
+alt Overdue Found
+    BE -> DB : Update status → ESCALATED
+    BE -> DB : Insert AuditLog (ESCALATION)
+    BE -> NOTIF : Send escalation email
+else No Overdue
+    BE --> CRON : No action
+end
+@enduml

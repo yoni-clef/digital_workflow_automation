@@ -11,10 +11,7 @@ export default function Register() {
     displayName: '',
     email: '',
     password: '',
-    role: 'USER',
-    department: '',
-    managerId: '',
-    isDepartmentHead: false
+    department: ''
   });
 
   const handleChange = (e) => {
@@ -34,8 +31,12 @@ export default function Register() {
     setIsLoading(true);
     
     try {
-      const payload = { ...formData };
-      if (!payload.managerId) delete payload.managerId;
+      const payload = { 
+        ...formData,
+        role: 'USER', // Always USER for self-registration
+        managerId: null, // Admin will assign later
+        isDepartmentHead: false // Admin will assign later
+      };
       await register(payload);
       navigate('/');
     } catch (err) {
@@ -117,66 +118,33 @@ export default function Register() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Role</label>
-              <div className="relative">
-                <BadgeCheck className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-                <select 
-                  name="role"
-                  value={formData.role}
-                  onChange={handleChange}
-                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all appearance-none"
-                >
-                  <option value="USER">User (Employee)</option>
-                  <option value="ADMIN">System Admin</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Department</label>
-              <div className="relative">
-                <Briefcase className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input 
-                  type="text" 
-                  name="department"
-                  value={formData.department}
-                  onChange={handleChange}
-                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-                  placeholder="e.g. IT"
-                />
-              </div>
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Department (Optional)</label>
+            <div className="relative">
+              <Briefcase className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
+              <input 
+                type="text" 
+                name="department"
+                value={formData.department}
+                onChange={handleChange}
+                style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                placeholder="e.g. IT, Engineering, Finance"
+              />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Manager ID (Optional)</label>
-              <div className="relative">
-                <UserPlus className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" />
-                <input 
-                  type="text" 
-                  name="managerId"
-                  value={formData.managerId}
-                  onChange={handleChange}
-                  style={{ paddingLeft: "3rem" }} className="w-full bg-gray-950 border border-gray-800 text-white rounded-lg pl-14 pr-4 py-2 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-                  placeholder="Paste Manager's User ID"
-                />
+          <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
+              <div className="text-sm text-indigo-300">
+                <p className="font-medium mb-1">Account Setup Information</p>
+                <ul className="space-y-1 text-indigo-200/80">
+                  <li>• Your account will be created as a standard User</li>
+                  <li>• A system administrator will assign your manager</li>
+                  <li>• Department access will be configured by admin</li>
+                  <li>• You'll receive an email when your account is fully configured</li>
+                </ul>
               </div>
-            </div>
-
-            <div className="space-y-1.5 flex items-center pt-6">
-              <label className="flex items-center gap-2 cursor-pointer text-sm text-gray-300">
-                <input 
-                  type="checkbox" 
-                  name="isDepartmentHead"
-                  checked={formData.isDepartmentHead}
-                  onChange={handleChange}
-                  className="w-4 h-4 bg-gray-950 border-gray-800 text-indigo-500 rounded focus:ring-indigo-500 focus:ring-1 transition-all"
-                />
-                I am a Department Head
-              </label>
             </div>
           </div>
 
