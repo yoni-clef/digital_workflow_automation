@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { z } from 'zod';
 import { PrismaClient } from '@prisma/client';
 import {
@@ -24,6 +25,7 @@ const prisma = new PrismaClient();
 initCronJobs();
 
 const app = express();
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors({ credentials: true, origin: true }));
 app.use(express.json({ limit: '1mb' }));
 

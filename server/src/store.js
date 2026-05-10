@@ -137,13 +137,14 @@ export async function createUser({ displayName, email, passwordHash, role = 'USE
   });
 }
 
-export async function updateUser(userId, { managerId, department, isDepartmentHead }) {
+export async function updateUser(userId, { managerId, department, isDepartmentHead, role }) {
   return prisma.user.update({
     where: { id: userId },
     data: {
       ...(managerId !== undefined && { managerId }),
       ...(department !== undefined && { department }),
-      ...(isDepartmentHead !== undefined && { isDepartmentHead })
+      ...(isDepartmentHead !== undefined && { isDepartmentHead }),
+      ...(role !== undefined && { role })
     }
   });
 }
@@ -441,7 +442,7 @@ export async function createRequest({ title, description, category, amountCents,
         ]
       }
     },
-    include: { history: true }
+    include: requestInclude
   });
 
   return toApiRequest(request);
@@ -459,7 +460,7 @@ export async function transitionRequest({ id, action, user, note, context = {} }
     });
 
     if (!request) return { error: 'NOT_FOUND' };
-    console.log('user', user.id, 'req', request.submitter.managerId, request.status); if (!canActOnRequest(user, request, action)) return { error: 'FORBIDDEN' };
+    if (!canActOnRequest(user, request, action)) return { error: 'FORBIDDEN' };
 
     const from = request.status;
     const to = allowedTransitions[from]?.[action] ?? null;

@@ -47,9 +47,8 @@ model User {
   requests         WorkflowRequest[] @relation("SubmittedRequests")
   assignedRequests WorkflowRequest[] @relation("AssignedRequests")
   auditLogs        RequestAuditLog[]
-  attachments     Attachment[]
   departmentHeads User[]             @relation("DepartmentHead")
-  managedBy        User?             @relation("DepartmentHead", fields: [departmentHeadId])
+  managedBy        User?             @relation("DepartmentHead", fields: [departmentHeadId], references: [id])
   departmentHeadId String?
   hasRequestedManager Boolean           @default(false)
   managerRequestCreatedAt DateTime?
