@@ -182,12 +182,17 @@ app.put('/api/admin/users/:id/role', authenticate, async (req, res, next) => {
     });
 
     const body = schema.parse(req.body);
-    
-    // Prevent removing the last admin
+
     if (body.role !== 'ADMIN') {
-      const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
-      if (adminCount <= 1) {
-        return res.status(400).json({ error: 'CANNOT_REMOVE_LAST_ADMIN' });
+      const target = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: { role: true }
+      });
+      if (target?.role === 'ADMIN') {
+        const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+        if (adminCount <= 1) {
+          return res.status(400).json({ error: 'CANNOT_REMOVE_LAST_ADMIN' });
+        }
       }
     }
 
@@ -302,7 +307,6 @@ app.get('/api/admin/users', authenticate, async (req, res, next) => {
 app.post('/api/manager-requests', authenticate, async (req, res, next) => {
   try {
     const schema = z.object({
-      requestedManagerId: z.string().optional(),
       reason: z.string().min(1).max(500)
     });
 
@@ -310,7 +314,7 @@ app.post('/api/manager-requests', authenticate, async (req, res, next) => {
     
     const request = await createManagerRequest({
       userId: req.user.id,
-      requestedManagerId: body.requestedManagerId || null,
+      requestedManagerId: null,
       reason: body.reason
     });
 
@@ -407,6 +411,14 @@ app.put('/api/users/:id', authenticate, async (req, res, next) => {
 app.use((err, req, res, next) => {
   if (err && err.name === 'ZodError') {
     return res.status(400).json({ error: 'VALIDATION_ERROR', issues: err.issues });
+  }
+
+  if (err && err.message === 'PENDING_MANAGER_REQUEST_EXISTS') {
+    return res.status(409).json({ error: 'PENDING_MANAGER_REQUEST_EXISTS' });
+  }
+
+  if (err && err.message === 'CANNOT_BE_OWN_MANAGER') {
+    return res.status(400).json({ error: 'CANNOT_BE_OWN_MANAGER' });
   }
 
   // eslint-disable-next-line no-console

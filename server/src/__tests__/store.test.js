@@ -168,6 +168,9 @@ describe('Task 7.1: Audit log entries contain required fields', () => {
                     }),
                     findUnique: vi.fn().mockResolvedValue(updatedRequest),
                 },
+                user: {
+                    findFirst: vi.fn().mockResolvedValue(null),
+                },
             };
             return fn(tx);
         });

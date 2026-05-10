@@ -130,10 +130,10 @@ export async function updateUserDepartmentHead(userId, isDepartmentHead, departm
   return data.user;
 }
 
-export async function createManagerRequest(requestedManagerId, reason) {
+export async function createManagerRequest(reason) {
   const data = await httpJson('/api/manager-requests', {
     method: 'POST',
-    body: JSON.stringify({ requestedManagerId, reason })
+    body: JSON.stringify({ reason })
   });
   return data.request;
 }

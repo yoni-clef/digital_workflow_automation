@@ -138,6 +138,10 @@ export async function createUser({ displayName, email, passwordHash, role = 'USE
 }
 
 export async function updateUser(userId, { managerId, department, isDepartmentHead, role }) {
+  if (managerId !== undefined && managerId !== null && managerId === userId) {
+    throw new Error('CANNOT_BE_OWN_MANAGER');
+  }
+
   return prisma.user.update({
     where: { id: userId },
     data: {
@@ -151,15 +155,11 @@ export async function updateUser(userId, { managerId, department, isDepartmentHe
 
 // Manager Request functions
 export async function createManagerRequest({ userId, requestedManagerId, reason }) {
-  // Check if user already has a pending request
-  const existingRequest = await prisma.managerRequest.findFirst({
-    where: {
-      userId,
-      status: 'PENDING'
-    }
+  const existing = await prisma.managerRequest.findUnique({
+    where: { userId }
   });
 
-  if (existingRequest) {
+  if (existing?.status === 'PENDING') {
     throw new Error('PENDING_MANAGER_REQUEST_EXISTS');
   }
 
@@ -172,18 +172,44 @@ export async function createManagerRequest({ userId, requestedManagerId, reason 
     }
   });
 
-  return prisma.managerRequest.create({
-    data: {
-      userId,
-      requestedManagerId,
-      reason,
-      status: 'PENDING'
-    },
-    include: {
-      user: true,
-      requestedManager: true
+  const data = {
+    requestedManagerId,
+    reason,
+    status: 'PENDING',
+    reviewedAt: null,
+    reviewedByAdminId: null
+  };
+  const include = { user: true, requestedManager: true };
+
+  // One row per user: update if a prior APPROVED/REJECTED row exists; otherwise insert.
+  if (existing) {
+    return prisma.managerRequest.update({
+      where: { userId },
+      data,
+      include
+    });
+  }
+
+  try {
+    return await prisma.managerRequest.create({
+      data: { userId, ...data },
+      include
+    });
+  } catch (err) {
+    // Parallel submits (double submit / two tabs): other request created the row first.
+    if (err?.code === 'P2002') {
+      const row = await prisma.managerRequest.findUnique({ where: { userId } });
+      if (row?.status === 'PENDING') {
+        throw new Error('PENDING_MANAGER_REQUEST_EXISTS');
+      }
+      return prisma.managerRequest.update({
+        where: { userId },
+        data,
+        include
+      });
     }
-  });
+    throw err;
+  }
 }
 
 export async function listManagerRequests() {
@@ -215,6 +241,10 @@ export async function approveManagerRequest(requestId, adminId, managerId) {
 
   if (request.status !== 'PENDING') {
     throw new Error('MANAGER_REQUEST_ALREADY_PROCESSED');
+  }
+
+  if (managerId === request.userId) {
+    throw new Error('CANNOT_BE_OWN_MANAGER');
   }
 
   // Update the request
@@ -449,7 +479,7 @@ export async function createRequest({ title, description, category, amountCents,
 }
 
 export async function transitionRequest({ id, action, user, note, context = {} }) {
-  return prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const request = await tx.workflowRequest.findFirst({
       where: { id, isDeleted: false },
       include: {
@@ -496,54 +526,60 @@ export async function transitionRequest({ id, action, user, note, context = {} }
       include: requestInclude
     });
 
-    // Send notifications after the DB write — failures must not abort the transition.
-    // Requirements 12.1, 12.2, 12.3, 12.4
-    try {
-      if (to === 'PENDING_MANAGER') {
-        // Notify the submitter's manager (Requirement 12.1)
-        const manager = request.submitter.manager;
-        if (manager?.email) {
-          await sendNotification(
-            manager.email,
-            `Action required: "${request.title}" is pending your review`,
-            `Hi ${manager.displayName},\n\nA request titled "${request.title}" has been submitted by ${request.submitter.displayName} and is awaiting your review.\n\nPlease log in to the workflow system to take action.`
-          );
-        }
-      } else if (to === 'PENDING_DEPARTMENT') {
-        // Notify the department head (Requirement 12.2)
-        const deptHead = await tx.user.findFirst({
-          where: {
-            isDepartmentHead: true,
-            department: request.submitter.department
-          }
+    // Queue emails here; send after commit so slow SMTP does not hit the interactive tx timeout.
+    const pendingNotifications = [];
+
+    if (to === 'PENDING_MANAGER') {
+      const manager = request.submitter.manager;
+      if (manager?.email) {
+        pendingNotifications.push({
+          to: manager.email,
+          subject: `Action required: "${request.title}" is pending your review`,
+          text: `Hi ${manager.displayName},\n\nA request titled "${request.title}" has been submitted by ${request.submitter.displayName} and is awaiting your review.\n\nPlease log in to the workflow system to take action.`
         });
-        if (deptHead?.email) {
-          await sendNotification(
-            deptHead.email,
-            `Action required: "${request.title}" is pending department approval`,
-            `Hi ${deptHead.displayName},\n\nA request titled "${request.title}" from ${request.submitter.displayName} requires department approval.\n\nPlease log in to the workflow system to take action.`
-          );
-        }
-      } else if (to === 'APPROVED' || to === 'REJECTED') {
-        // Notify the submitter (Requirement 12.3)
-        const submitter = request.submitter;
-        if (submitter?.email) {
-          const outcome = to === 'APPROVED' ? 'approved' : 'rejected';
-          await sendNotification(
-            submitter.email,
-            `Your request "${request.title}" has been ${outcome}`,
-            `Hi ${submitter.displayName},\n\nYour request titled "${request.title}" has been ${outcome}.\n\nPlease log in to the workflow system for more details.`
-          );
-        }
       }
-    } catch (err) {
-      // Requirement 12.4: email failure must not prevent the transition from completing
-      // eslint-disable-next-line no-console
-      console.error('Notification error (non-fatal):', err);
+    } else if (to === 'PENDING_DEPARTMENT') {
+      const deptHead = await tx.user.findFirst({
+        where: {
+          isDepartmentHead: true,
+          department: request.submitter.department
+        }
+      });
+      if (deptHead?.email) {
+        pendingNotifications.push({
+          to: deptHead.email,
+          subject: `Action required: "${request.title}" is pending department approval`,
+          text: `Hi ${deptHead.displayName},\n\nA request titled "${request.title}" from ${request.submitter.displayName} requires department approval.\n\nPlease log in to the workflow system to take action.`
+        });
+      }
+    } else if (to === 'APPROVED' || to === 'REJECTED') {
+      const submitter = request.submitter;
+      if (submitter?.email) {
+        const outcome = to === 'APPROVED' ? 'approved' : 'rejected';
+        pendingNotifications.push({
+          to: submitter.email,
+          subject: `Your request "${request.title}" has been ${outcome}`,
+          text: `Hi ${submitter.displayName},\n\nYour request titled "${request.title}" has been ${outcome}.\n\nPlease log in to the workflow system for more details.`
+        });
+      }
     }
 
-    return { request: toApiRequest(updated) };
+    return { request: toApiRequest(updated), pendingNotifications };
   });
+
+  if (result.error) return result;
+
+  // Requirements 12.1–12.3: deliver after commit. 12.4: failures must not undo the transition.
+  try {
+    for (const { to: addr, subject, text } of result.pendingNotifications ?? []) {
+      await sendNotification(addr, subject, text);
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('Notification error (non-fatal):', err);
+  }
+
+  return { request: result.request };
 }
 
 export async function delegateRequest({ id, assignee, user, note, context = {} }) {
